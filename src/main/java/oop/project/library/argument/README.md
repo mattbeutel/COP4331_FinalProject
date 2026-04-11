@@ -24,4 +24,15 @@ Less good:
 
 ### Individual Review (Command Lead)
 
+Good:
+- The argument layer integrates cleanly with command definitions.
+- Type-specific parsing is centralized instead of scattered through commands.
+
+Less good:
+- Some future command features, like defaults that depend on other args, are not modeled yet.
+- Enum/regex support is planned but not demonstrated in the PoC scenarios.
+
 ### Team Review
+
+- We like the separation between parsing a raw value and validating a parsed value.
+- We are still unsure whether future functionality should keep extending `ArgumentType<T>` directly, or introduce a richer spec object around it for metadata/help text.
