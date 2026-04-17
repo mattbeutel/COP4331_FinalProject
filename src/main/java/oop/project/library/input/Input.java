@@ -50,6 +50,7 @@ public final class Input {
                 throw new RuntimeException("Unterminated quoted string @ index " + start + ".");
             }
             var value = new String(chars, start + 1, index - start - 1);
+            index++;
             return Optional.of(new Value.QuotedString(value));
         } else {
             var start = index;
