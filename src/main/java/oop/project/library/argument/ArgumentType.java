@@ -10,7 +10,7 @@ public interface ArgumentType<T> {
     T parse(String raw) throws ParseFailure;
 
     default ArgumentType<T> validate(Validator<? super T> validator) {
-        var self = this;
+        ArgumentType<T> self = this;
         return new SimpleArgumentType<>(description(), raw -> {
             T value = self.parse(raw);
             validator.validate(value);
@@ -27,7 +27,7 @@ public interface ArgumentType<T> {
     }
 
     default <R> ArgumentType<R> map(String description, Function<? super T, ? extends R> mapper) {
-        var self = this;
+        ArgumentType<T> self = this;
         return new SimpleArgumentType<>(description, raw -> mapper.apply(self.parse(raw)));
     }
 

@@ -4,9 +4,11 @@ import java.time.LocalDate;
 import java.time.format.DateTimeParseException;
 import java.util.Arrays;
 import java.util.LinkedHashSet;
+import java.util.Locale;
 import java.util.Objects;
 import java.util.Set;
 import java.util.function.Function;
+import java.util.regex.Pattern;
 
 public final class ArgumentTypes {
 
@@ -61,14 +63,14 @@ public final class ArgumentTypes {
     public static <E extends Enum<E>> ArgumentType<E> enumType(Class<E> enumClass) {
         Objects.requireNonNull(enumClass, "enumClass");
         return custom(enumClass.getSimpleName(), raw -> {
-            try {
-                return Enum.valueOf(enumClass, raw);
-            } catch (IllegalArgumentException e) {
-                throw new ParseFailure(
-                        "Expected one of " + Arrays.toString(enumClass.getEnumConstants()) + " but got '" + raw + "'.",
-                        e
-                );
+            for (E constant : enumClass.getEnumConstants()) {
+                if (constant.name().equalsIgnoreCase(raw)) {
+                    return constant;
+                }
             }
+            throw new ParseFailure(
+                    "Expected one of " + Arrays.toString(enumClass.getEnumConstants()) + " but got '" + raw + "'."
+            );
         });
     }
 
@@ -111,6 +113,24 @@ public final class ArgumentTypes {
                 throw new ParseFailure("Expected one of " + allowed + " but got '" + value + "'.");
             }
         };
+    }
+
+    public static Validator<String> regex(String regex) {
+        return regex(Pattern.compile(regex));
+    }
+
+    public static Validator<String> regex(Pattern pattern) {
+        Objects.requireNonNull(pattern, "pattern");
+        return value -> {
+            if (!pattern.matcher(value).matches()) {
+                throw new ParseFailure("Expected string matching regex '" + pattern.pattern() + "' but got '" + value + "'.");
+            }
+        };
+    }
+
+    public static <E extends Enum<E>> ArgumentType<String> enumNameLowercase(Class<E> enumClass) {
+        return enumType(enumClass).map(enumClass.getSimpleName().toLowerCase(Locale.ROOT),
+                value -> value.name().toLowerCase(Locale.ROOT));
     }
 
 }
