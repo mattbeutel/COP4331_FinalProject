@@ -4,35 +4,35 @@ Handles creation of command structures and multi-argument parsing.
 
 ## Development Notes
 
-- `CommandSpec` uses a small builder API so scenarios can define commands declaratively.
-- Positional and named arguments are modeled with the same `ValueSpec<T>` abstraction, differing only by kind and a few configuration fields.
-- `ParsedCommand` provides typed getters and a `Map` view so the library can be ergonomic both for users and for the provided scenarios.
-- Command tokenization is handled in the command layer instead of relying entirely on `BasicArgs`, because the PoC/MVP behavior needs bare flags like `--case-insensitive`.
-- The parser already supports one-level subcommands, which made the `dispatch` scenario straightforward.
+- `CommandSpec` uses a builder so scenario definitions stay declarative and readable.
+- Positional and named arguments share the same `ValueSpec<T>` abstraction, which keeps the command model small.
+- `ParsedCommand` stores parsed state separately from command structure and exposes typed getters so incorrect extraction fails clearly.
+- The builder validates preconditions such as duplicate names, aliases, and subcommand tokens when commands are created.
+- Subcommand parsing returns the selected subcommand name along with the parsed values, which keeps dispatch logic in the scenario typed and explicit.
 
-## PoC Design Analysis
+## MVP Design Analysis
 
 ### Individual Review (Command Lead)
 
 Good:
-- The builder API keeps command definitions readable.
-- Named arguments, default values, flags, and subcommands fit into one coherent parser model.
+- The builder-based API makes command definitions concise while still enforcing important invariants.
+- Defaults, aliases, flags, and subcommands fit into one coherent parser model.
 
 Less good:
-- There is not yet support for repeated arguments or varargs-style positionals.
-- The current subcommand support is intentionally simple and may need refactoring for deeper nesting.
+- The current subcommand support is intentionally shallow and may need a richer representation if deeper nesting is added later.
+- Repeated arguments and list-valued arguments are not modeled yet.
 
 ### Individual Review (Argument Lead)
 
 Good:
-- Command parsing reuses typed argument parsing cleanly.
-- Validation errors are wrapped with the argument name, which improves usability.
+- Command parsing reuses typed argument parsing cleanly instead of duplicating conversion logic.
+- Typed extraction through `ParsedCommand` gives clearer failure modes than passing raw `Object` values around.
 
 Less good:
-- There is no help/usage text generation yet.
-- Alias and default handling works, but the API could be expanded to make those features more self-documenting.
+- There is no generated help/usage layer yet, so the API is strong for parsing but still thin on user guidance.
+- Tokenization currently lives inside the command system, which is practical for MVP behavior but could be split further if the input layer grows.
 
 ### Team Review
 
-- We agree that keeping command definitions declarative is a strong design choice.
-- We are less certain about how far to push a single parser model before introducing specialized command-node types for advanced subcommands and defaults.
+- We agree that validating command structure eagerly in the builder improves library correctness.
+- We are unsure whether future expansion should continue adding features to `CommandSpec`, or split advanced subcommands into separate node types.

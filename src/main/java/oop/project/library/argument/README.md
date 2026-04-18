@@ -24,5 +24,15 @@ Less good:
 
 ### Individual Review (Command Lead)
 
+Good:
+- The argument layer integrates cleanly into command definitions without leaking command-specific responsibilities into the parser abstraction.
+- Standardized `ParseFailure` messages make it straightforward for commands to wrap failures with argument context.
+
+Less good:
+- Some advanced validation patterns, such as cross-field validation, are still outside the scope of the current design.
+- We normalize enum casing for usability, but there is not yet a configurable casing policy for all parsers.
+
 ### Team Review
 
+- We agree that keeping the argument layer independent from command structure was the right decision.
+- We still see room to improve how custom types and validators are documented so the API is more self-explanatory for first-time users.

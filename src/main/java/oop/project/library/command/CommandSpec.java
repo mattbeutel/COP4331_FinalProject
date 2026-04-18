@@ -6,9 +6,11 @@ import oop.project.library.input.Input;
 
 import java.util.ArrayList;
 import java.util.LinkedHashMap;
+import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
+import java.util.Set;
 
 public final class CommandSpec {
 
@@ -21,30 +23,49 @@ public final class CommandSpec {
         private final List<ValueSpec<?>> positionalSpecs = new ArrayList<>();
         private final List<ValueSpec<?>> namedSpecs = new ArrayList<>();
         private final Map<String, CommandSpec> subcommands = new LinkedHashMap<>();
+        private final Set<String> positionalNames = new LinkedHashSet<>();
+        private final Set<String> namedKeys = new LinkedHashSet<>();
 
         private Builder(String name) {
-            this.name = Objects.requireNonNull(name, "name");
+            this.name = requireName(name, "Command name");
         }
 
         public Builder positional(ValueSpec<?> spec) {
             requireKind(spec, ValueSpec.Kind.POSITIONAL);
+            if (!positionalNames.add(spec.name())) {
+                throw new IllegalArgumentException("Duplicate positional argument name '" + spec.name() + "'.");
+            }
             positionalSpecs.add(spec);
             return this;
         }
 
         public Builder named(ValueSpec<?> spec) {
             requireKind(spec, ValueSpec.Kind.NAMED);
+            registerNamedKey(spec.name());
+            for (String alias : spec.aliases()) {
+                registerNamedKey(alias);
+            }
             namedSpecs.add(spec);
             return this;
         }
 
         public Builder subcommand(String token, CommandSpec spec) {
-            subcommands.put(Objects.requireNonNull(token, "token"), Objects.requireNonNull(spec, "spec"));
+            String normalizedToken = requireName(token, "Subcommand token");
+            Objects.requireNonNull(spec, "spec");
+            if (subcommands.putIfAbsent(normalizedToken, spec) != null) {
+                throw new IllegalArgumentException("Duplicate subcommand token '" + normalizedToken + "'.");
+            }
             return this;
         }
 
         public CommandSpec build() {
             return new CommandSpec(name, positionalSpecs, namedSpecs, subcommands);
+        }
+
+        private void registerNamedKey(String key) {
+            if (!namedKeys.add(key)) {
+                throw new IllegalArgumentException("Duplicate named argument key '" + key + "'.");
+            }
         }
 
         private static void requireKind(ValueSpec<?> spec, ValueSpec.Kind expected) {
@@ -104,8 +125,8 @@ public final class CommandSpec {
             switch (token) {
                 case Input.Value.Literal(String literal) -> args.positional().add(literal);
                 case Input.Value.QuotedString(String quoted) -> args.positional().add(quoted);
-                case Input.Value.SingleFlag(String name) -> i += attachNamedValue(args, tokens, i, name);
-                case Input.Value.DoubleFlag(String name) -> i += attachNamedValue(args, tokens, i, name);
+                case Input.Value.SingleFlag(String flagName) -> i += attachNamedValue(args, tokens, i, flagName);
+                case Input.Value.DoubleFlag(String flagName) -> i += attachNamedValue(args, tokens, i, flagName);
             }
         }
         return args;
@@ -153,7 +174,8 @@ public final class CommandSpec {
                 new ArrayList<>(args.positional().subList(1, args.positional().size())),
                 new LinkedHashMap<>(args.named())
         );
-        return subcommand.parse(remaining);
+        ParsedCommand parsedSubcommand = subcommand.parse(remaining);
+        return new ParsedCommand(parsedSubcommand.asMap(), token);
     }
 
     private void parsePositionals(BasicArgs args, Map<String, Object> values) {
@@ -217,4 +239,13 @@ public final class CommandSpec {
             throw new ParseFailure("Invalid value for '" + spec.name() + "': " + e.getMessage(), e);
         }
     }
+
+    private static String requireName(String name, String label) {
+        Objects.requireNonNull(name, label);
+        if (name.isBlank()) {
+            throw new IllegalArgumentException(label + " cannot be blank.");
+        }
+        return name;
+    }
+
 }

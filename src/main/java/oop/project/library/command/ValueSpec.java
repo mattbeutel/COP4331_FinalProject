@@ -1,6 +1,7 @@
 package oop.project.library.command;
 
 import oop.project.library.argument.ArgumentType;
+import oop.project.library.argument.ArgumentTypes;
 
 import java.util.LinkedHashSet;
 import java.util.Objects;
@@ -30,7 +31,7 @@ public final class ValueSpec<T> {
             T implicitFlagValue
     ) {
         this.kind = Objects.requireNonNull(kind, "kind");
-        this.name = Objects.requireNonNull(name, "name");
+        this.name = requireName(name);
         this.type = Objects.requireNonNull(type, "type");
         this.aliases = Set.copyOf(aliases);
         this.required = required;
@@ -56,24 +57,24 @@ public final class ValueSpec<T> {
     }
 
     public static ValueSpec<Boolean> flag(String name, String... aliases) {
-        return new ValueSpec<>(
-                Kind.NAMED,
-                name,
-                oop.project.library.argument.ArgumentTypes.bool(),
-                aliasesSet(aliases),
-                false,
-                false,
-                true,
-                true
-        );
+        return new ValueSpec<>(Kind.NAMED, name, ArgumentTypes.bool(), aliasesSet(aliases), false, false, true, true);
+    }
+
+    private static String requireName(String name) {
+        Objects.requireNonNull(name, "name");
+        if (name.isBlank()) {
+            throw new IllegalArgumentException("Argument names cannot be blank.");
+        }
+        return name;
     }
 
     private static Set<String> aliasesSet(String... aliases) {
         Set<String> result = new LinkedHashSet<>();
         for (String alias : aliases) {
-            if (alias != null && !alias.isBlank()) {
-                result.add(alias);
+            if (alias == null || alias.isBlank()) {
+                throw new IllegalArgumentException("Argument aliases cannot be null or blank.");
             }
+            result.add(alias);
         }
         return result;
     }
@@ -113,4 +114,5 @@ public final class ValueSpec<T> {
     boolean matchesName(String candidate) {
         return name.equals(candidate) || aliases.contains(candidate);
     }
+
 }
