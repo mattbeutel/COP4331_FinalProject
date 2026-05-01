@@ -1,38 +1,28 @@
 package oop.project.library.command;
 
-import java.util.Collections;
+import oop.project.library.argument.ParseException;
+
 import java.util.LinkedHashMap;
 import java.util.Map;
 import java.util.Objects;
 import java.util.Optional;
 
-public final class ParsedCommand {
+/**
+ * Immutable result of parsing one command invocation.
+ */
+public record ParsedCommand(Map<String, Object> values, String subcommandName) {
 
-    private final Map<String, Object> values;
-    private final String subcommandName;
+    public ParsedCommand {
+        Objects.requireNonNull(values, "values");
+        values = Map.copyOf(new LinkedHashMap<>(values));
+    }
 
-    ParsedCommand(Map<String, Object> values) {
+    public ParsedCommand(Map<String, Object> values) {
         this(values, null);
     }
 
-    ParsedCommand(Map<String, Object> values, String subcommandName) {
-        this.values = new LinkedHashMap<>(values);
-        this.subcommandName = subcommandName;
-    }
-
-    public Map<String, Object> asMap() {
-        return Collections.unmodifiableMap(values);
-    }
-
-    public Optional<String> subcommandName() {
+    public Optional<String> subcommandNameOption() {
         return Optional.ofNullable(subcommandName);
-    }
-
-    public String requireSubcommandName() {
-        if (subcommandName == null) {
-            throw new IllegalStateException("No subcommand was selected.");
-        }
-        return subcommandName;
     }
 
     public boolean contains(String name) {
@@ -41,16 +31,24 @@ public final class ParsedCommand {
 
     public Object get(String name) {
         if (!values.containsKey(name)) {
-            throw new IllegalArgumentException("Unknown argument '" + name + "'.");
+            throw new ParseException("Unknown argument '" + name + "'.");
         }
         return values.get(name);
     }
 
+    /**
+     * Returns a parsed value while also verifying the caller's expected static type.
+     *
+     * @param name argument name to extract
+     * @param type expected runtime type
+     * @return parsed value cast to the requested type
+     * @throws ParseException when the argument is missing or has a different type
+     */
     public <T> T get(String name, Class<T> type) {
         Objects.requireNonNull(type, "type");
         Object value = get(name);
         if (!type.isInstance(value)) {
-            throw new IllegalArgumentException(
+            throw new ParseException(
                     "Argument '" + name + "' is a " + value.getClass().getSimpleName() + ", not a " + type.getSimpleName() + "."
             );
         }

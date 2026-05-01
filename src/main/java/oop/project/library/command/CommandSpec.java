@@ -1,6 +1,8 @@
 package oop.project.library.command;
 
-import oop.project.library.argument.ParseFailure;
+import oop.project.library.argument.ArgumentType;
+import oop.project.library.argument.ArgumentTypes;
+import oop.project.library.argument.ParseException;
 import oop.project.library.input.BasicArgs;
 import oop.project.library.input.Input;
 
@@ -12,7 +14,22 @@ import java.util.Map;
 import java.util.Objects;
 import java.util.Set;
 
+/**
+ * Immutable definition of one command's argument structure.
+ */
 public final class CommandSpec {
+
+    private record PositionalArgument<T>(String name, ArgumentType<T> type, boolean required, T defaultValue) {}
+
+    private record NamedArgument<T>(
+            String name,
+            ArgumentType<T> type,
+            Set<String> aliases,
+            boolean required,
+            T defaultValue,
+            boolean acceptsImplicitValue,
+            T implicitValue
+    ) {}
 
     public static Builder builder(String name) {
         return new Builder(name);
@@ -20,36 +37,85 @@ public final class CommandSpec {
 
     public static final class Builder {
         private final String name;
-        private final List<ValueSpec<?>> positionalSpecs = new ArrayList<>();
-        private final List<ValueSpec<?>> namedSpecs = new ArrayList<>();
+        private final List<PositionalArgument<?>> positionalArguments = new ArrayList<>();
+        private final List<NamedArgument<?>> namedArguments = new ArrayList<>();
         private final Map<String, CommandSpec> subcommands = new LinkedHashMap<>();
-        private final Set<String> positionalNames = new LinkedHashSet<>();
+        private final Set<String> canonicalArgumentNames = new LinkedHashSet<>();
         private final Set<String> namedKeys = new LinkedHashSet<>();
+        private boolean hasOptionalPositional = false;
 
         private Builder(String name) {
             this.name = requireName(name, "Command name");
         }
 
-        public Builder positional(ValueSpec<?> spec) {
-            requireKind(spec, ValueSpec.Kind.POSITIONAL);
-            if (!positionalNames.add(spec.name())) {
-                throw new IllegalArgumentException("Duplicate positional argument name '" + spec.name() + "'.");
+        /**
+         * Adds a required positional argument parsed by the supplied argument type.
+         */
+        public <T> Builder addPositional(String name, ArgumentType<T> type) {
+            ensureNoSubcommands("positional arguments");
+            if (hasOptionalPositional) {
+                throw new IllegalArgumentException("Required positional arguments cannot be added after optional positional arguments.");
             }
-            positionalSpecs.add(spec);
+            String canonicalName = registerArgumentName(name, "Positional argument name");
+            positionalArguments.add(new PositionalArgument<>(canonicalName, Objects.requireNonNull(type, "type"), true, null));
             return this;
         }
 
-        public Builder named(ValueSpec<?> spec) {
-            requireKind(spec, ValueSpec.Kind.NAMED);
-            registerNamedKey(spec.name());
-            for (String alias : spec.aliases()) {
-                registerNamedKey(alias);
-            }
-            namedSpecs.add(spec);
+        public <T> Builder addOptionalPositional(String name, ArgumentType<T> type, T defaultValue) {
+            ensureNoSubcommands("positional arguments");
+            String canonicalName = registerArgumentName(name, "Positional argument name");
+            positionalArguments.add(new PositionalArgument<>(canonicalName, Objects.requireNonNull(type, "type"), false, defaultValue));
+            hasOptionalPositional = true;
             return this;
         }
 
-        public Builder subcommand(String token, CommandSpec spec) {
+        /**
+         * Adds a required named argument and any aliases that should map to the same value.
+         */
+        public <T> Builder addNamed(String name, ArgumentType<T> type, String... aliases) {
+            ensureNoSubcommands("named arguments");
+            namedArguments.add(new NamedArgument<>(
+                    registerNamedName(name),
+                    Objects.requireNonNull(type, "type"),
+                    registerAliases(aliases),
+                    true,
+                    null,
+                    false,
+                    null
+            ));
+            return this;
+        }
+
+        public <T> Builder addOptionalNamed(String name, ArgumentType<T> type, T defaultValue, String... aliases) {
+            ensureNoSubcommands("named arguments");
+            namedArguments.add(new NamedArgument<>(
+                    registerNamedName(name),
+                    Objects.requireNonNull(type, "type"),
+                    registerAliases(aliases),
+                    false,
+                    defaultValue,
+                    false,
+                    null
+            ));
+            return this;
+        }
+
+        public Builder addFlag(String name, String... aliases) {
+            ensureNoSubcommands("named arguments");
+            namedArguments.add(new NamedArgument<>(
+                    registerNamedName(name),
+                    ArgumentTypes.bool(),
+                    registerAliases(aliases),
+                    false,
+                    false,
+                    true,
+                    true
+            ));
+            return this;
+        }
+
+        public Builder addSubcommand(String token, CommandSpec spec) {
+            ensureNoArguments("subcommands");
             String normalizedToken = requireName(token, "Subcommand token");
             Objects.requireNonNull(spec, "spec");
             if (subcommands.putIfAbsent(normalizedToken, spec) != null) {
@@ -59,184 +125,175 @@ public final class CommandSpec {
         }
 
         public CommandSpec build() {
-            return new CommandSpec(name, positionalSpecs, namedSpecs, subcommands);
+            return new CommandSpec(name, positionalArguments, namedArguments, subcommands);
         }
 
-        private void registerNamedKey(String key) {
-            if (!namedKeys.add(key)) {
-                throw new IllegalArgumentException("Duplicate named argument key '" + key + "'.");
+        private String registerArgumentName(String rawName, String label) {
+            String name = requireName(rawName, label);
+            if (!canonicalArgumentNames.add(name)) {
+                throw new IllegalArgumentException("Duplicate argument name '" + name + "'.");
+            }
+            return name;
+        }
+
+        private String registerNamedName(String rawName) {
+            String name = registerArgumentName(rawName, "Named argument name");
+            if (!namedKeys.add(name)) {
+                throw new IllegalArgumentException("Duplicate named argument key '" + name + "'.");
+            }
+            return name;
+        }
+
+        private Set<String> registerAliases(String... aliases) {
+            Set<String> normalizedAliases = new LinkedHashSet<>();
+            for (String alias : aliases) {
+                String normalized = requireName(alias, "Named argument alias");
+                if (!normalizedAliases.add(normalized)) {
+                    throw new IllegalArgumentException("Duplicate alias '" + normalized + "'.");
+                }
+                if (!namedKeys.add(normalized)) {
+                    throw new IllegalArgumentException("Duplicate named argument key '" + normalized + "'.");
+                }
+            }
+            return Set.copyOf(normalizedAliases);
+        }
+
+        private void ensureNoSubcommands(String thingBeingAdded) {
+            if (!subcommands.isEmpty()) {
+                throw new IllegalArgumentException("Cannot add " + thingBeingAdded + " to a command that already has subcommands.");
             }
         }
 
-        private static void requireKind(ValueSpec<?> spec, ValueSpec.Kind expected) {
-            Objects.requireNonNull(spec, "spec");
-            if (spec.kind() != expected) {
-                throw new IllegalArgumentException("Expected a " + expected + " specification.");
+        private void ensureNoArguments(String thingBeingAdded) {
+            if (!positionalArguments.isEmpty() || !namedArguments.isEmpty()) {
+                throw new IllegalArgumentException("Cannot add " + thingBeingAdded + " to a command that already has direct arguments.");
             }
         }
     }
 
     private final String name;
-    private final List<ValueSpec<?>> positionalSpecs;
-    private final List<ValueSpec<?>> namedSpecs;
+    private final List<PositionalArgument<?>> positionalArguments;
+    private final List<NamedArgument<?>> namedArguments;
     private final Map<String, CommandSpec> subcommands;
+    private final Map<String, NamedArgument<?>> namedLookup;
 
     private CommandSpec(
             String name,
-            List<ValueSpec<?>> positionalSpecs,
-            List<ValueSpec<?>> namedSpecs,
+            List<PositionalArgument<?>> positionalArguments,
+            List<NamedArgument<?>> namedArguments,
             Map<String, CommandSpec> subcommands
     ) {
         this.name = name;
-        this.positionalSpecs = List.copyOf(positionalSpecs);
-        this.namedSpecs = List.copyOf(namedSpecs);
+        this.positionalArguments = List.copyOf(positionalArguments);
+        this.namedArguments = List.copyOf(namedArguments);
         this.subcommands = Map.copyOf(subcommands);
+        this.namedLookup = buildNamedLookup(namedArguments);
     }
 
     public ParsedCommand parse(String rawArguments) {
-        return parse(tokenize(rawArguments));
+        return parse(new Input(rawArguments).parseBasicArgs());
     }
 
     public ParsedCommand parse(BasicArgs args) {
+        Objects.requireNonNull(args, "args");
         if (!subcommands.isEmpty()) {
-            return parseWithSubcommands(args);
+            return parseSubcommand(args);
         }
 
         Map<String, Object> values = new LinkedHashMap<>();
-        parsePositionals(args, values);
-        parseNamed(args, values);
+        parsePositionalArguments(args.positional(), values);
+        parseNamedArguments(args.named(), values);
         return new ParsedCommand(values);
     }
 
-    private static BasicArgs tokenize(String rawArguments) {
-        Input input = new Input(rawArguments);
-        List<Input.Value> tokens = new ArrayList<>();
-        while (true) {
-            Input.Value value = input.parseValue().orElse(null);
-            if (value == null) {
-                break;
-            }
-            tokens.add(value);
-        }
-
-        BasicArgs args = new BasicArgs(new ArrayList<>(), new LinkedHashMap<>());
-        for (int i = 0; i < tokens.size(); i++) {
-            Input.Value token = tokens.get(i);
-            switch (token) {
-                case Input.Value.Literal(String literal) -> args.positional().add(literal);
-                case Input.Value.QuotedString(String quoted) -> args.positional().add(quoted);
-                case Input.Value.SingleFlag(String flagName) -> i += attachNamedValue(args, tokens, i, flagName);
-                case Input.Value.DoubleFlag(String flagName) -> i += attachNamedValue(args, tokens, i, flagName);
-            }
-        }
-        return args;
-    }
-
-    private static int attachNamedValue(BasicArgs args, List<Input.Value> tokens, int index, String name) {
-        if (index + 1 >= tokens.size()) {
-            args.named().put(name, "");
-            return 0;
-        }
-
-        Input.Value next = tokens.get(index + 1);
-        switch (next) {
-            case Input.Value.Literal(String literal) -> {
-                args.named().put(name, literal);
-                return 1;
-            }
-            case Input.Value.QuotedString(String quoted) -> {
-                args.named().put(name, quoted);
-                return 1;
-            }
-            case Input.Value.SingleFlag(String ignoredSingle) -> {
-                args.named().put(name, "");
-                return 0;
-            }
-            case Input.Value.DoubleFlag(String ignoredDouble) -> {
-                args.named().put(name, "");
-                return 0;
-            }
-        }
-    }
-
-    private ParsedCommand parseWithSubcommands(BasicArgs args) {
+    private ParsedCommand parseSubcommand(BasicArgs args) {
         if (args.positional().isEmpty()) {
-            throw new ParseFailure("Command '" + name + "' requires a subcommand.");
+            throw new ParseException("Command '" + name + "' requires a subcommand.");
         }
 
-        String token = args.positional().getFirst();
+        String token = args.positional().get(0);
         CommandSpec subcommand = subcommands.get(token);
         if (subcommand == null) {
-            throw new ParseFailure("Unknown subcommand '" + token + "' for command '" + name + "'.");
+            throw new ParseException("Unknown subcommand '" + token + "' for command '" + name + "'.");
         }
 
-        BasicArgs remaining = new BasicArgs(
+        BasicArgs remainingArgs = new BasicArgs(
                 new ArrayList<>(args.positional().subList(1, args.positional().size())),
                 new LinkedHashMap<>(args.named())
         );
-        ParsedCommand parsedSubcommand = subcommand.parse(remaining);
-        return new ParsedCommand(parsedSubcommand.asMap(), token);
+        ParsedCommand parsedSubcommand = subcommand.parse(remainingArgs);
+        return new ParsedCommand(parsedSubcommand.values(), token);
     }
 
-    private void parsePositionals(BasicArgs args, Map<String, Object> values) {
-        if (args.positional().size() > positionalSpecs.size()) {
-            throw new ParseFailure("Command '" + name + "' received too many positional arguments.");
+    private void parsePositionalArguments(List<String> rawPositionals, Map<String, Object> values) {
+        if (rawPositionals.size() > positionalArguments.size()) {
+            throw new ParseException("Command '" + name + "' received too many positional arguments.");
         }
 
-        for (int i = 0; i < positionalSpecs.size(); i++) {
-            ValueSpec<?> spec = positionalSpecs.get(i);
-            if (i < args.positional().size()) {
-                values.put(spec.name(), parseRaw(spec, args.positional().get(i)));
-            } else if (spec.required()) {
-                throw new ParseFailure("Missing positional argument '" + spec.name() + "'.");
+        for (int index = 0; index < positionalArguments.size(); index++) {
+            PositionalArgument<?> argument = positionalArguments.get(index);
+            if (index < rawPositionals.size()) {
+                values.put(argument.name(), parseRaw(argument.name(), argument.type(), rawPositionals.get(index)));
+            } else if (argument.required()) {
+                throw new ParseException("Missing positional argument '" + argument.name() + "'.");
             } else {
-                values.put(spec.name(), spec.defaultValue());
+                values.put(argument.name(), argument.defaultValue());
             }
         }
     }
 
-    private void parseNamed(BasicArgs args, Map<String, Object> values) {
-        for (Map.Entry<String, String> entry : args.named().entrySet()) {
-            ValueSpec<?> spec = resolveNamed(entry.getKey());
-            if (spec == null) {
-                throw new ParseFailure("Unknown named argument '" + entry.getKey() + "'.");
+    private void parseNamedArguments(Map<String, String> rawNamedArguments, Map<String, Object> values) {
+        Set<String> seenCanonicalNames = new LinkedHashSet<>();
+        for (Map.Entry<String, String> entry : rawNamedArguments.entrySet()) {
+            NamedArgument<?> argument = namedLookup.get(entry.getKey());
+            if (argument == null) {
+                throw new ParseException("Unknown named argument '" + entry.getKey() + "'.");
+            }
+            if (!seenCanonicalNames.add(argument.name())) {
+                throw new ParseException("Named argument '" + argument.name() + "' was provided multiple times.");
             }
 
-            String raw = entry.getValue();
-            if (raw.isEmpty()) {
-                if (!spec.allowImplicitFlagValue()) {
-                    throw new ParseFailure("Named argument '" + spec.name() + "' requires a value.");
+            String rawValue = entry.getValue();
+            if (rawValue.isEmpty()) {
+                if (!argument.acceptsImplicitValue()) {
+                    throw new ParseException("Named argument '" + argument.name() + "' requires a value.");
                 }
-                values.put(spec.name(), spec.implicitFlagValue());
+                values.put(argument.name(), argument.implicitValue());
             } else {
-                values.put(spec.name(), parseRaw(spec, raw));
+                values.put(argument.name(), parseRaw(argument.name(), argument.type(), rawValue));
             }
         }
 
-        for (ValueSpec<?> spec : namedSpecs) {
-            if (!values.containsKey(spec.name())) {
-                if (spec.required()) {
-                    throw new ParseFailure("Missing named argument '" + spec.name() + "'.");
+        for (NamedArgument<?> argument : namedArguments) {
+            if (!values.containsKey(argument.name())) {
+                if (argument.required()) {
+                    throw new ParseException("Missing named argument '" + argument.name() + "'.");
                 }
-                values.put(spec.name(), spec.defaultValue());
+                values.put(argument.name(), argument.defaultValue());
             }
         }
     }
 
-    private ValueSpec<?> resolveNamed(String key) {
-        for (ValueSpec<?> spec : namedSpecs) {
-            if (spec.matchesName(key)) {
-                return spec;
+    private static Map<String, NamedArgument<?>> buildNamedLookup(List<NamedArgument<?>> namedArguments) {
+        Map<String, NamedArgument<?>> lookup = new LinkedHashMap<>();
+        for (NamedArgument<?> argument : namedArguments) {
+            if (lookup.putIfAbsent(argument.name(), argument) != null) {
+                throw new IllegalArgumentException("Duplicate named argument key '" + argument.name() + "'.");
+            }
+            for (String alias : argument.aliases()) {
+                if (lookup.putIfAbsent(alias, argument) != null) {
+                    throw new IllegalArgumentException("Duplicate named argument key '" + alias + "'.");
+                }
             }
         }
-        return null;
+        return Map.copyOf(lookup);
     }
 
-    private static Object parseRaw(ValueSpec<?> spec, String raw) {
+    private static Object parseRaw(String argumentName, ArgumentType<?> type, String rawValue) {
         try {
-            return spec.type().parse(raw);
-        } catch (ParseFailure e) {
-            throw new ParseFailure("Invalid value for '" + spec.name() + "': " + e.getMessage(), e);
+            return type.parse(rawValue);
+        } catch (ParseException e) {
+            throw new ParseException("Invalid value for '" + argumentName + "': " + e.getMessage(), e);
         }
     }
 
